@@ -14,3 +14,7 @@ Thumbs.db
 
 # Data files (we'll add these later)
 data/raw/
+
+# Exploration script outputs
+phase1_*.png
+explore_data.py
