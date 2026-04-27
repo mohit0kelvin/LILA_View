@@ -12,8 +12,12 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Data files (we'll add these later)
+# Data files
 data/raw/
+
+# Minimaps are needed by the deployed app
+!data/raw/minimaps/
+!data/raw/minimaps/*
 
 # Exploration script outputs
 phase1_*.png
