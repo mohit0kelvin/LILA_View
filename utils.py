@@ -20,9 +20,9 @@ MAP_CONFIGS = {
 # (instead of trusting the README's stated 1024x1024) because the real images
 # are larger and vary per map.
 MINIMAP_PATHS = {
-    "AmbroseValley": "data/raw/minimaps/AmbroseValley_Minimap.png",
-    "GrandRift":     "data/raw/minimaps/GrandRift_Minimap.png",
-    "Lockdown":      "data/raw/minimaps/Lockdown_Minimap.jpg",
+    "AmbroseValley": "minimaps/AmbroseValley_Minimap.png",
+    "GrandRift":     "minimaps/GrandRift_Minimap.png",
+    "Lockdown":      "minimaps/Lockdown_Minimap.jpg",
 }
 
 
