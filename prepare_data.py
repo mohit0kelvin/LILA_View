@@ -21,7 +21,6 @@ RAW_DIR = "data/raw"
 PROCESSED_DIR = "data/processed"
 DAY_FOLDERS = ["February_10", "February_11", "February_12", "February_13", "February_14"]
 
-# Map dates to ISO strings so the UI can filter & sort easily
 DATE_MAP = {
     "February_10": "2026-02-10",
     "February_11": "2026-02-11",
@@ -30,18 +29,17 @@ DATE_MAP = {
     "February_14": "2026-02-14",  # partial day
 }
 
-POSITION_DOWNSAMPLE_RATE = 3   # keep every Nth position row
+POSITION_DOWNSAMPLE_RATE = 3
 COMBAT_EVENTS = {"Kill", "Killed", "BotKill", "BotKilled", "Loot", "KilledByStorm"}
 POSITION_EVENTS = {"Position", "BotPosition"}
 
 UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
+
 def is_human_user(user_id: str) -> bool:
     """Returns True for UUIDs (humans), False for numeric IDs (bots)."""
     return bool(UUID_PATTERN.match(user_id))
 
-
-# ---------- Step 1: Load and combine all raw files ----------
 
 def load_all_raw() -> pd.DataFrame:
     """Read every parquet file in every day folder, return combined DataFrame."""
@@ -65,24 +63,19 @@ def load_all_raw() -> pd.DataFrame:
     return combined
 
 
-# ---------- Step 2: Clean / enrich the data ----------
-
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Decode event bytes, add is_human column, add ts_relative within each match."""
+    """Decode event bytes, add is_human, compute ts_ms and ts_relative."""
     print("Cleaning data...")
     start = time.time()
 
-    # Decode event column from bytes to strings
     df['event'] = df['event'].apply(lambda x: x.decode('utf-8') if isinstance(x, bytes) else x)
-
-    # Add is_human flag
     df['is_human'] = df['user_id'].apply(is_human_user)
 
-    # Convert ts to int64 milliseconds-since-epoch for easier math.
-    # (ts is stored as datetime64[ms], but the values represent match-internal time, not real dates.)
-    df['ts_ms'] = df['ts'].astype('int64') // 10**6   # nanoseconds → ms
+    # Per the README: ts is "milliseconds elapsed within the match, not wall-clock time".
+    # The raw int64 representation of datetime64[ms] gives us the underlying millisecond value.
+    df['ts_ms'] = df['ts'].astype('int64')
 
-    # Compute relative timestamp within each match (0 = match start)
+    # Relative timestamp within each match (0 = match start)
     match_starts = df.groupby('match_id')['ts_ms'].transform('min')
     df['ts_relative'] = df['ts_ms'] - match_starts
 
@@ -93,8 +86,6 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
           f"Bots: {df[~df['is_human']]['user_id'].nunique()}\n")
     return df
 
-
-# ---------- Step 3: Split into events / paths / matches ----------
 
 def split_outputs(df: pd.DataFrame):
     """Produce 3 separate DataFrames from the cleaned data."""
@@ -108,12 +99,9 @@ def split_outputs(df: pd.DataFrame):
     ]].reset_index(drop=True)
     print(f"  events:  {len(events_df):,} rows")
 
-   # --- paths.parquet: position events, downsampled ---
+    # --- paths.parquet: position events, downsampled ---
     positions_df = df[df['event'].isin(POSITION_EVENTS)].copy()
     positions_df = positions_df.sort_values(['match_id', 'user_id', 'ts_ms'])
-    # Downsample: keep every Nth row PER (match_id, user_id) group.
-    # Use cumcount to assign a within-group position, then keep rows where (position % N == 0).
-    # This is faster and cleaner than groupby().apply() and avoids index issues.
     positions_df['_within_group_idx'] = positions_df.groupby(['match_id', 'user_id']).cumcount()
     positions_df = positions_df[positions_df['_within_group_idx'] % POSITION_DOWNSAMPLE_RATE == 0]
     paths_df = positions_df[[
@@ -122,13 +110,14 @@ def split_outputs(df: pd.DataFrame):
     ]].reset_index(drop=True)
     print(f"  paths:   {len(paths_df):,} rows (downsampled by {POSITION_DOWNSAMPLE_RATE}x)")
 
-    # --- matches.parquet: one row per match ---
+    # --- matches.parquet: one row per match with summary stats ---
     print(f"  matches: computing per-match summaries...")
     match_summaries = []
     for match_id, mdf in df.groupby('match_id'):
         humans = mdf[mdf['is_human']]['user_id'].unique()
         bots = mdf[~mdf['is_human']]['user_id'].unique()
         event_counts = mdf['event'].value_counts().to_dict()
+        duration_ms = int(mdf['ts_relative'].max())
 
         match_summaries.append({
             'match_id':       match_id,
@@ -144,17 +133,19 @@ def split_outputs(df: pd.DataFrame):
             'n_bot_killed':   event_counts.get('BotKilled', 0),
             'n_storm_deaths': event_counts.get('KilledByStorm', 0),
             'n_loot':         event_counts.get('Loot', 0),
-            'duration_ms':    mdf['ts_relative'].max(),
+            'duration_ms':    duration_ms,
+            'has_playback':   duration_ms > 0,
         })
 
     matches_df = pd.DataFrame(match_summaries)
-    matches_df = matches_df.sort_values(['date', 'map_id', 'n_files'], ascending=[True, True, False]).reset_index(drop=True)
+    matches_df = matches_df.sort_values(
+        ['date', 'map_id', 'n_files'], ascending=[True, True, False]
+    ).reset_index(drop=True)
     print(f"  matches: {len(matches_df):,} rows")
+    print(f"           {matches_df['has_playback'].sum()} have playback (non-zero duration)")
 
     return events_df, paths_df, matches_df
 
-
-# ---------- Step 4: Save outputs ----------
 
 def save_outputs(events_df, paths_df, matches_df):
     """Write the three parquet files to data/processed/."""
@@ -169,13 +160,10 @@ def save_outputs(events_df, paths_df, matches_df):
     paths_df.to_parquet(paths_path, index=False)
     matches_df.to_parquet(matches_path, index=False)
 
-    # Print file sizes so we know what we shipped
     for path in [events_path, paths_path, matches_path]:
         size_kb = os.path.getsize(path) / 1024
         print(f"  {path}: {size_kb:.1f} KB")
 
-
-# ---------- Main ----------
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -192,4 +180,4 @@ if __name__ == "__main__":
     print(f"  Events file:  {len(events_df):,} rows")
     print(f"  Paths file:   {len(paths_df):,} rows")
     print(f"  Matches file: {len(matches_df):,} matches")
-    print(f"\nNext step: build the Streamlit app to consume these files.")
+    print(f"  Playable matches: {matches_df['has_playback'].sum()}")
