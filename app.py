@@ -33,25 +33,29 @@ st.caption("Telemetry visualization for the Level Design team")
 
 # ---------- Data loading (cached) ----------
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_events() -> pd.DataFrame:
     return pd.read_parquet("data/processed/events.parquet")
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_paths() -> pd.DataFrame:
     return pd.read_parquet("data/processed/paths.parquet")
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_matches() -> pd.DataFrame:
     return pd.read_parquet("data/processed/matches.parquet")
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_minimap(map_id: str):
     return Image.open(MINIMAP_PATHS[map_id])
 
-events = load_events()
-paths = load_paths()
-matches = load_matches()
+
+# Load all data with a unified spinner so the user sees a meaningful loading state
+# instead of a blank screen during the cold start.
+with st.spinner("🎮 Loading LILA BLACK telemetry... (this can take a few seconds on first load)"):
+    events = load_events()
+    paths = load_paths()
+    matches = load_matches()
 
 
 # ---------- SIDEBAR: Filters ----------
@@ -519,7 +523,8 @@ with tab_markers:
     if len(filt_events_marker) == 0 and len(filt_paths_marker) == 0:
         st.info("No events match the current filters. Try widening your selection.")
     else:
-        st.plotly_chart(fig, use_container_width=True, key="markers_chart")
+        with st.spinner("🗺️ Rendering map..."):
+            st.plotly_chart(fig, use_container_width=True, key="markers_chart")
 
 
 # ============================================================================
@@ -698,7 +703,8 @@ with tab_heatmap:
             showlegend=False,
         )
 
-        st.plotly_chart(fig_heat, use_container_width=True, key="heatmap_chart")
+        with st.spinner(f"🔥 Rendering {heatmap_type.lower()} heatmap..."):
+            st.plotly_chart(fig_heat, use_container_width=True, key="heatmap_chart")
 
 # ---------- Stats panel (under both tabs) ----------
 
